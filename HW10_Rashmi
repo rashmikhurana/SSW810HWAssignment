@@ -1,0 +1,287 @@
+import unittest
+import os
+from collections import defaultdict
+from prettytable import PrettyTable
+from HW08_Rashmi_Khurana import file_reading_gen
+import sqlite3
+
+
+
+class Student:
+    PT_Fields = ['CWID', 'NAME', 'MAJOR', 'COMPLETED COURSES', 'REMAINING REQUIRED', 'REMAINING ELECTIVES']
+
+    def __init__(self, stdcwid, name, major, dept) :
+        """Update Student info"""
+        self._cwid = stdcwid
+        self._name = name
+        self._major = major
+        self._dept = dept
+
+        self._course = dict()
+
+    def add_course(self, course, grade) :
+        """Updates Student Course and Grades"""
+        self._course[course] = grade
+
+    def pt_row(self) :
+        """Student Pretty table"""
+        completed, remaining_Req, remaining_Elec = self._dept.major_grades(self._course)
+        return self._cwid, self._name, self._major, completed, remaining_Req, remaining_Elec
+
+
+class Major :
+    pt_labels = ["MAJOR", "REQUIRED", "ELECTIVES"]
+
+    def __init__(self, dept) :
+        """Major info"""
+        self._dept = dept
+
+        self._elective = set()
+        self._required = set()
+
+    def add_course(self, flag, course) :
+        """find required and electives"""
+        if flag.lower() == 'r' :
+            self._required.add(course)
+        elif flag.lower() == 'e' :
+            self._elective.add(course)
+        else :
+            raise ValueError(f"Unknown Flag: {flag}")
+
+    def major_grades(self, courses) :
+        """Find student completed, remaining required and remaining elective course"""
+        completed = {course for course, grade in courses.items() if grade in {'A', 'A-', 'B+', 'B', 'B-', 'C'}}
+        if completed == "{}" :
+            return [completed, self._required, self._elective]
+        else :
+            required = sorted(self._required - completed)
+            if self._elective.intersection(completed) :
+                electives = None
+            else :
+                electives = sorted(self._elective)
+
+            return [completed, required, electives]
+
+    def pt_row(self) :
+        """print major pretty table"""
+        return [self._dept, self._required, self._elective]
+
+
+class Instructors :
+    PT_Fields = ['CWID', 'NAME', 'DEPT', 'COURSE', 'STUDENTS']
+
+    def __init__(self, cwid, name, dept) :
+        """Update instructor info"""
+        self._cwid = cwid
+        self._name = name
+        self._dept = dept
+
+        self._course = defaultdict(int)
+
+    def add_course(self, course) :
+        """Updates Student Course and Grades"""
+        self._course[course] += 1
+
+    def pt_row(self) :
+        """Instructor's Pretty Table"""
+        ls = []
+        for course, student in self._course.items() :
+            ls.append([self._cwid, self._name, self._dept, course, student])
+        return ls
+
+
+class Repository :
+    """Class to call other classes"""
+
+    def __init__(self, dir_path, pt=False, test=False):
+        self._students = dict()
+        self._instructors = dict()
+        self._major = dict()
+
+        try :
+            """read files"""
+            self._get_major(os.path.join(dir_path, "majors.txt"))
+            self._get_students(os.path.join(dir_path, "students.txt"))
+            self._get_instructors(os.path.join(dir_path, "instructors.txt"))
+            self._get_grades(os.path.join(dir_path, "grades.txt"))
+            self._instructor_table_db("C:/Users/Rashmi/sqllite/sqlite-tools-win32-x86-3300100/HW11.db")
+        except FileNotFoundError as fnfe :
+            print(fnfe)
+        except ValueError as a :
+            print(a)
+
+        if pt :
+            """create pretty table"""
+            self.major_PT()
+            self.student_PT()
+            self.instructor_PT()
+            self.instructor_db_pt("C:/Users/Rashmi/sqllite/sqlite-tools-win32-x86-3300100/HW11.db")
+
+        if test :
+            """Test the code"""
+            self.major_test()
+            self.student_test()
+            self.instructor_test()
+            self.instructor_db_test("C:/Users/Rashmi/sqllite/sqlite-tools-win32-x86-3300100/HW11.db")
+
+    def _get_major(self, path) :
+        """Create Major's dict with major as key and major class instance as value"""
+        try :
+            for major, flag, course in file_reading_gen(path, 3, sep='\t', header=True):
+                if major in self._major :
+                    self._major[major].add_course(flag, course)
+                else :
+                    self._major[major] = Major(major)
+                    self._major[major].add_course(flag, course)
+        except FileNotFoundError as fnfe :
+            print(fnfe)
+        except ValueError as e :
+            print(e)
+
+    def _get_students(self, path) :
+        """Create Student dict with cwid key and student class instance as value"""
+        try :
+            for stdcwid, name, major in file_reading_gen(path, fields=3, sep='\t', header=True):
+                if stdcwid in self._students :
+                    raise ValueError(f"Duplicate CWID:{stdcwid}")
+                else :
+                    self._students[stdcwid] = Student(stdcwid, name, major, self._major[major])
+        except FileNotFoundError as fnfe :
+            print(fnfe)
+        except ValueError as e :
+            print(e)
+
+    def _get_instructors(self, path) :
+        """Create Instructor dict with instr cwid as key and Instructor class instance as value"""
+        try :
+            for instrcwid, name, dept in file_reading_gen(path, fields=3, sep='\t', header=True):
+                if instrcwid in self._instructors :
+                    raise ValueError(f"Duplicate CWID:{instrcwid}")
+                else :
+                    self._instructors[instrcwid] = Instructors(instrcwid, name, dept)
+        except FileNotFoundError as fnfe :
+            print(fnfe)
+        except ValueError as e :
+            print(e)
+
+    def _get_grades(self, path) :
+        """get grades/no. of student and add then to Student/Instructors class"""
+        try :
+            for stdcwid, course, grade, instrcwid in file_reading_gen(path, fields=4, sep='\t', header=True):
+                if stdcwid in self._students :
+                    self._students[stdcwid].add_course(course, grade)
+                else :
+                    print(f"Student {stdcwid} not present")
+
+                if instrcwid in self._instructors :
+                    self._instructors[instrcwid].add_course(course)
+                else :
+                    print(f"Unknown Instructor {instrcwid}")
+        except FileNotFoundError as fnfe :
+            print(fnfe)
+        except ValueError as e :
+            print(e)
+
+    def _instructor_table_db(self, db_path) :
+        """retrieve summary of instructor from db"""
+
+        try :
+            database = sqlite3.connect(db_path)
+        except sqlite3.OperationalError :
+            print(f"Unable to open the path: {db_path}")
+        else :
+            query = """select i.cwid, i.Name,i.Dept, g.course, count(*) as Student
+                       from instructors i, grades g where i.CWID = g.InstructorCWID
+                       group by i.cwid, i.Name,i.Dept, g.course;"""
+            for line in database.execute(query) :
+                yield line
+
+    def major_PT(self) :
+        """Pretty table for majors"""
+        pt = PrettyTable(Major.pt_labels)
+        for major in self._major.values() :
+            pt.add_row(major.pt_row())
+        print("Major")
+        print(pt)
+
+    def student_PT(self) :
+        """Print Student table"""
+        pt = PrettyTable(Student.PT_Fields)
+        for student in self._students.values() :
+            pt.add_row(student.pt_row())
+        print("Student")
+        print(pt)
+
+    def instructor_PT(self) :
+        """Print Instructor table"""
+        pt = PrettyTable(Instructors.PT_Fields)
+        for instr in self._instructors.keys() :
+            for value in self._instructors[instr].pt_row() :
+                pt.add_row(value)
+        print("Instructor")
+        print(pt)
+
+    def instructor_db_pt(self, db_path):
+        """Instructor Pretty table from instructor"""
+
+        pt = PrettyTable(field_name=['CWID', 'NAME', 'DEPT', 'COURSE', 'STUDENTS'])
+        for line in self._instructor_table_db(db_path) :
+            pt.add_row(line)
+        print("Instructor_db")
+        print(pt)
+
+    def major_test(self) :
+        mt = []
+        for major in self._major.keys() :
+            mt.append(self._major[major].pt_row())
+        return mt
+
+    def student_test(self) :
+        st = []
+        for cwid in self._students.keys() :
+            st.append(self._students[cwid].pt_row())
+        return st
+
+    def instructor_test(self) :
+        it = []
+        for instr in self._instructors.keys():
+            for value in self._instructors[instr].pt_row() :
+                it.append(value)
+        return it
+
+    def instructor_db_test(self, db_path):
+        db = []
+        for line in self._instructor_table_db(db_path):
+            db.append(line)
+        print(db)
+        return db
+
+def main() :
+    stevens = Repository("C:/Users/Rashmi/PycharmProjects/ssw810", pt=True, test=True)
+    
+    return stevens
+
+
+class TestModule(unittest.TestCase):
+
+    def test_hw11(self) :
+        # Blank grade for new students
+        # Error message for Duplicate CWID for student and instructor
+        # Error message for Wrong directory address
+
+        major_exp = [['SFEN', {'SSW 540', 'SSW 555', 'SSW 567', 'SSW 564'}, {'CS 545', 'CS 513', 'CS 501'}],
+                     ['SYEN', {'SYS 671', 'SYS 800', 'SYS 612'}, {'SSW 540', 'SSW 810', 'SSW 565'}]]
+        student_exp = [('10103', 'Baldwin, C', 'SFEN', {'SSW 567', 'SSW 564'}, ['SSW 540', 'SSW 555'],
+                        ['CS 501', 'CS 513', 'CS 545'])]
+        instructor_exp = [['98765', 'Einstein, A', 'SFEN', 'SSW 567', 1], ['98764', 'Feynman, R', 'SFEN', 'SSW 564', 1],
+                          ['98764', 'Feynman, R', 'SFEN', 'SSW 687', 1]]
+        instructor_db_exp = [('98762', 'Hawking, S', 'CS', 'CS 501', 1), ('98762', 'Hawking, S', 'CS', 'CS 546', 1), ('98762', 'Hawking, S', 'CS', 'CS 570', 1), ('98763', 'Rowland, J', 'SFEN', 'SSW 555', 1), ('98763', 'Rowland, J', 'SFEN', 'SSW 810', 4), ('98764', 'Cohen, R', 'SFEN', 'CS 546', 1)]
+        obj = Repository('C:/Users/Rashmi/PycharmProjects/ssw810', test=True)
+
+        self.assertEqual(obj.major_test(), major_exp)
+        self.assertEqual(obj.student_test(), student_exp)
+        self.assertEqual(obj.instructor_test(), instructor_exp)
+        self.assertEqual(obj.instructor_db_test("C:/Users/Rashmi/sqllite/sqlite-tools-win32-x86-3300100/HW11.db"),instructor_db_exp)
+
+if __name__ == '__main__' :
+    unittest.main(exit=False, verbosity=2)
